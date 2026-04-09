@@ -1,0 +1,33 @@
+# Конфигурация модемов для call-tester
+# ============================================
+#
+# КАК ОПРЕДЕЛИТЬ ПОРТЫ:
+#   1. Подключайте модемы по одному
+#   2. После каждого: ls /dev/ttyUSB*
+#   3. AT-порт обычно 2-й или 3-й (считая с 0)
+#   4. Проверка: echo -e "AT\r" > /dev/ttyUSBx && timeout 1 cat /dev/ttyUSBx
+
+modems:
+  - name: sim7600
+    port: /dev/ttyUSB6
+    baud_rate: 115200
+    model: SIM7600E-L1C
+    phone_number: "+77086420937"
+
+  - name: ec25_1
+    port: /dev/ttyUSB2
+    baud_rate: 115200
+    model: Quectel EC25-EUX
+    phone_number: "+77002222222"
+
+  - name: ec25_2
+    port: /dev/ttyUSB11
+    baud_rate: 115200
+    model: Quectel EC25-EUX
+    phone_number: "+77076421165"
+
+  - name: ep06
+    port: /dev/ttyUSB15
+    baud_rate: 115200
+    model: Quectel EP06-E
+    phone_number: "+77076423712"
