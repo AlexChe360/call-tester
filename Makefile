@@ -10,7 +10,7 @@ build:
 
 # Кросс-компиляция на маке для RPi 5 (ARM64 Linux)
 build-rpi:
-	GOOS=linux GOARCH=arm64 go build -o $(BINARY)-linux-arm64 ./cmd/call-tester
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o $(BINARY)-linux-arm64 ./cmd/call-tester
 	@echo "Готово: $(BINARY)-linux-arm64"
 
 # Деплой на RPi (с мака)
