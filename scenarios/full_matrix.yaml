@@ -21,13 +21,13 @@ steps:
   - action: pause
     duration_sec: 5
 
-  - action: call
-    from_modem: sim7600
-    to_modem: ep06
-    hold_duration_sec: 30
+  # - action: call
+  #   from_modem: sim7600
+  #   to_modem: ep06
+  #   hold_duration_sec: 30
 
-  - action: pause
-    duration_sec: 5
+  # - action: pause
+  #   duration_sec: 5
 
   # === ОТ ec25_1 ===
   - action: call
@@ -46,13 +46,13 @@ steps:
   - action: pause
     duration_sec: 5
 
-  - action: call
-    from_modem: ec25_1
-    to_modem: ep06
-    hold_duration_sec: 30
+  # - action: call
+  #   from_modem: ec25_1
+  #   to_modem: ep06
+  #   hold_duration_sec: 30
 
-  - action: pause
-    duration_sec: 5
+  # - action: pause
+  #   duration_sec: 5
 
   # === ОТ ec25_2 ===
   - action: call
@@ -71,32 +71,32 @@ steps:
   - action: pause
     duration_sec: 5
 
-  - action: call
-    from_modem: ec25_2
-    to_modem: ep06
-    hold_duration_sec: 30
+  # - action: call
+  #   from_modem: ec25_2
+  #   to_modem: ep06
+  #   hold_duration_sec: 30
 
-  - action: pause
-    duration_sec: 5
+  # - action: pause
+  #   duration_sec: 5
 
   # === ОТ ep06 ===
-  - action: call
-    from_modem: ep06
-    to_modem: sim7600
-    hold_duration_sec: 30
+  # - action: call
+  #   from_modem: ep06
+  #   to_modem: sim7600
+  #   hold_duration_sec: 30
 
-  - action: pause
-    duration_sec: 5
+  # - action: pause
+  #   duration_sec: 5
 
-  - action: call
-    from_modem: ep06
-    to_modem: ec25_1
-    hold_duration_sec: 30
+  # - action: call
+  #   from_modem: ep06
+  #   to_modem: ec25_1
+  #   hold_duration_sec: 30
 
-  - action: pause
-    duration_sec: 5
+  # - action: pause
+  #   duration_sec: 5
 
-  - action: call
-    from_modem: ep06
-    to_modem: ec25_2
-    hold_duration_sec: 30
+  # - action: call
+  #   from_modem: ep06
+  #   to_modem: ec25_2
+  #   hold_duration_sec: 30
