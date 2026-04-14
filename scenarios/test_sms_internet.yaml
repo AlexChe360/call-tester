@@ -1,0 +1,32 @@
+name: full_test
+description: Тест SMS и интернета
+
+steps:
+  # Тест интернета
+  - action: internet_on
+    from_modem: ec25_1
+    apn: "internet"
+    
+  - action: pause
+    duration_sec: 5
+    
+  - action: internet_off
+    from_modem: ec25_1
+    
+  - action: pause
+    duration_sec: 5
+    
+  # Тест SMS на произвольный номер
+  - action: sms
+    from_modem: ec25_1
+    to_number: "+77078185115"
+    message: "Test message from EC25"
+    
+  - action: pause
+    duration_sec: 5
+    
+  # Тест SMS между модемами
+  - action: sms
+    from_modem: sim7600
+    to_number: "+77072110963"
+    message: "Hello from SIM7600"
