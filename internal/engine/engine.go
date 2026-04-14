@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"call-tester/internal/modem"
 	"call-tester/internal/models"
+	"call-tester/internal/modem"
 	"fmt"
 	"log"
 	"time"
@@ -113,6 +113,56 @@ func (e *Engine) Execute(scenario *models.Scenario) (*models.ScenarioReport, err
 			log.Printf("  Результат: %s -> %s | %s | %.1fс",
 				record.NumberA, record.NumberB, record.Status,
 				ptrFloat(record.TalkDurationSec))
+			records = append(records, record)
+		case "sms":
+			var record models.CallRecord
+			var err error
+
+			// Поддерживаем оба варианта: to_modem (для модемов из конфига) и to_number (для любых номеров)
+			if step.ToNumber != "" {
+				record, err = e.executeSMS(step.FromModem, "", step.ToNumber, step.Message, scenario.Name, idx)
+			} else if step.ToModem != "" {
+				record, err = e.executeSMS(step.FromModem, step.ToModem, "", step.Message, scenario.Name, idx)
+			} else {
+				err = fmt.Errorf("для SMS нужно указать to_number или to_modem")
+				// Создаём запись об ошибке
+				fromCfg, _ := e.manager.Config(step.FromModem)
+				now := time.Now()
+				record = models.CallRecord{
+					ID:           uuid.New().String(),
+					FromModem:    step.FromModem,
+					NumberA:      fromCfg.PhoneNumber,
+					CallStart:    now,
+					CallEnd:      &now,
+					Status:       models.StatusFailed,
+					ScenarioName: scenario.Name,
+					StepIndex:    idx,
+				}
+			}
+
+			if err != nil {
+				log.Printf("  Ошибка SMS: %v", err)
+			} else {
+				log.Printf("  SMS: %s -> %s | %s", record.NumberA, record.NumberB, record.Status)
+			}
+			records = append(records, record)
+
+		case "internet_on":
+			record, err := e.executeInternetConnect(step.FromModem, step.APN, step.APNUser, step.APNPassword, scenario.Name, idx)
+			if err != nil {
+				log.Printf("  Ошибка подключения интернета: %v", err)
+			} else {
+				log.Printf("  Интернет: %s | %s", record.FromModem, record.Status)
+			}
+			records = append(records, record)
+
+		case "internet_off":
+			record, err := e.executeInternetDisconnect(step.FromModem, scenario.Name, idx)
+			if err != nil {
+				log.Printf("  Ошибка отключения интернета: %v", err)
+			} else {
+				log.Printf("  Интернет: %s | %s", record.FromModem, record.Status)
+			}
 			records = append(records, record)
 
 		case "pause":
@@ -254,6 +304,94 @@ func (e *Engine) executeCall(fromName, toName string, holdSec int, scenarioName 
 	return record, nil
 }
 
+// executeSMS — отправка SMS на любой номер
+func (e *Engine) executeSMS(fromName, toName, toNumber, message, scenarioName string, stepIdx int) (models.CallRecord, error) {
+	fromCfg, err := e.manager.Config(fromName)
+	if err != nil {
+		return models.CallRecord{}, err
+	}
+
+	sender, err := e.manager.Get(fromName)
+	if err != nil {
+		return models.CallRecord{}, err
+	}
+
+	// Определяем номер получателя
+	var targetNumber string
+	var targetModem string
+
+	if toNumber != "" {
+		// Отправка на произвольный номер
+		targetNumber = toNumber
+		targetModem = "" // не связано с модемом из конфига
+		log.Printf("  SMS на произвольный номер: %s", targetNumber)
+	} else if toName != "" {
+		// Отправка на модем из конфига (для обратной совместимости)
+		toCfg, err := e.manager.Config(toName)
+		if err != nil {
+			return models.CallRecord{}, err
+		}
+		targetNumber = toCfg.PhoneNumber
+		targetModem = toName
+		log.Printf("  SMS на модем: %s (%s)", toName, targetNumber)
+	} else {
+		return models.CallRecord{}, fmt.Errorf("не указан получатель: нужен to_number или to_modem")
+	}
+
+	smsRecord := &models.SMSRecord{
+		ID:         uuid.New().String(),
+		FromModem:  fromName,
+		FromNumber: fromCfg.PhoneNumber,
+		ToNumber:   targetNumber,
+		ToModem:    targetModem,
+		Message:    message,
+		SentAt:     time.Now(),
+		Status:     models.StatusInitiated,
+	}
+
+	log.Printf("  SMS: %s -> %s: \"%s\"", fromName, targetNumber, message)
+
+	err = sender.SendSMS(targetNumber, message)
+	if err != nil {
+		smsRecord.Status = models.StatusFailed
+		smsRecord.Error = err.Error()
+
+		return models.CallRecord{
+			ID:           smsRecord.ID,
+			Direction:    "outgoing",
+			FromModem:    fromName,
+			NumberA:      fromCfg.PhoneNumber,
+			ToModem:      targetModem,
+			NumberB:      targetNumber,
+			CallStart:    smsRecord.SentAt,
+			CallEnd:      &smsRecord.SentAt,
+			Status:       models.StatusFailed,
+			ScenarioName: scenarioName,
+			StepIndex:    stepIdx,
+			SMSRecord:    smsRecord,
+		}, err
+	}
+
+	smsRecord.Status = models.StatusSent
+	log.Printf("  SMS успешно отправлена на %s", targetNumber)
+
+	now := time.Now()
+	return models.CallRecord{
+		ID:           smsRecord.ID,
+		Direction:    "outgoing",
+		FromModem:    fromName,
+		NumberA:      fromCfg.PhoneNumber,
+		ToModem:      targetModem,
+		NumberB:      targetNumber,
+		CallStart:    smsRecord.SentAt,
+		CallEnd:      &now,
+		Status:       models.StatusSent,
+		ScenarioName: scenarioName,
+		StepIndex:    stepIdx,
+		SMSRecord:    smsRecord,
+	}, nil
+}
+
 func makeFailedRecord(fromModem, numberA, toModem, numberB, scenario string, step int, status string) models.CallRecord {
 	now := time.Now()
 	dur := 0.0
@@ -271,6 +409,139 @@ func makeFailedRecord(fromModem, numberA, toModem, numberB, scenario string, ste
 		ScenarioName:     scenario,
 		StepIndex:        step,
 	}
+}
+
+// executeInternetConnect — подключение интернета
+func (e *Engine) executeInternetConnect(modemName, apn, user, password, scenarioName string, stepIdx int) (models.CallRecord, error) {
+	cfg, err := e.manager.Config(modemName)
+	if err != nil {
+		return models.CallRecord{}, err
+	}
+
+	modemCtrl, err := e.manager.Get(modemName)
+	if err != nil {
+		return models.CallRecord{}, err
+	}
+
+	// Используем APN из шага или из конфига
+	if apn == "" {
+		apn = cfg.APN
+		user = cfg.APNUser
+		password = cfg.APNPassword
+	}
+
+	internetRecord := &models.InternetRecord{
+		ID:        uuid.New().String(),
+		Modem:     modemName,
+		Action:    "connect",
+		APN:       apn,
+		Timestamp: time.Now(),
+		Status:    models.StatusInitiated,
+	}
+
+	log.Printf("  Интернет: подключение %s (APN: %s)", modemName, apn)
+
+	err = modemCtrl.SetupInternet(apn, user, password)
+	if err != nil {
+		internetRecord.Status = models.StatusFailed
+		internetRecord.Error = err.Error()
+
+		now := time.Now()
+		return models.CallRecord{
+			ID:             internetRecord.ID,
+			FromModem:      modemName,
+			NumberA:        cfg.PhoneNumber,
+			CallStart:      internetRecord.Timestamp,
+			CallEnd:        &now,
+			Status:         models.StatusFailed,
+			ScenarioName:   scenarioName,
+			StepIndex:      stepIdx,
+			InternetRecord: internetRecord,
+		}, err
+	}
+
+	// Проверяем статус и получаем IP
+	connected, ip, _ := modemCtrl.CheckInternetStatus()
+	internetRecord.IPAddress = ip
+	internetRecord.Status = models.StatusConnected
+
+	if !connected {
+		internetRecord.Status = models.StatusFailed
+		internetRecord.Error = "не удалось получить IP адрес"
+	}
+
+	log.Printf("  Интернет подключён, IP: %s", ip)
+
+	now := time.Now()
+	return models.CallRecord{
+		ID:             internetRecord.ID,
+		FromModem:      modemName,
+		NumberA:        cfg.PhoneNumber,
+		CallStart:      internetRecord.Timestamp,
+		CallEnd:        &now,
+		Status:         internetRecord.Status,
+		ScenarioName:   scenarioName,
+		StepIndex:      stepIdx,
+		InternetRecord: internetRecord,
+	}, nil
+}
+
+// executeInternetDisconnect — отключение интернета
+func (e *Engine) executeInternetDisconnect(modemName, scenarioName string, stepIdx int) (models.CallRecord, error) {
+	cfg, err := e.manager.Config(modemName)
+	if err != nil {
+		return models.CallRecord{}, err
+	}
+
+	modemCtrl, err := e.manager.Get(modemName)
+	if err != nil {
+		return models.CallRecord{}, err
+	}
+
+	internetRecord := &models.InternetRecord{
+		ID:        uuid.New().String(),
+		Modem:     modemName,
+		Action:    "disconnect",
+		Timestamp: time.Now(),
+		Status:    models.StatusInitiated,
+	}
+
+	log.Printf("  Интернет: отключение %s", modemName)
+
+	err = modemCtrl.DisconnectInternet()
+	if err != nil {
+		internetRecord.Status = models.StatusFailed
+		internetRecord.Error = err.Error()
+
+		now := time.Now()
+		return models.CallRecord{
+			ID:             internetRecord.ID,
+			FromModem:      modemName,
+			NumberA:        cfg.PhoneNumber,
+			CallStart:      internetRecord.Timestamp,
+			CallEnd:        &now,
+			Status:         models.StatusFailed,
+			ScenarioName:   scenarioName,
+			StepIndex:      stepIdx,
+			InternetRecord: internetRecord,
+		}, err
+	}
+
+	internetRecord.Status = models.StatusConnected
+	log.Printf("  Интернет отключён")
+
+	now := time.Now()
+	return models.CallRecord{
+		ID:             internetRecord.ID,
+		FromModem:      modemName,
+		NumberA:        cfg.PhoneNumber,
+		CallStart:      internetRecord.Timestamp,
+		CallEnd:        &now,
+		Status:         models.StatusConnected,
+		ScenarioName:   scenarioName,
+		StepIndex:      stepIdx,
+		InternetRecord: internetRecord,
+	}, nil
 }
 
 func ptrFloat(p *float64) float64 {

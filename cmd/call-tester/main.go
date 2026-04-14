@@ -2,8 +2,8 @@ package main
 
 import (
 	"call-tester/internal/engine"
-	"call-tester/internal/modem"
 	"call-tester/internal/models"
+	"call-tester/internal/modem"
 	"call-tester/internal/report"
 	"flag"
 	"fmt"
@@ -77,6 +77,36 @@ func main() {
 		}
 		cmdRun(config, scenario, *output)
 
+	case "sms":
+		smsFlags := flag.NewFlagSet("sms", flag.ExitOnError)
+		output := smsFlags.String("o", "reports", "директория для отчётов")
+		smsFlags.Parse(os.Args[2:])
+
+		if smsFlags.NArg() < 3 {
+			fmt.Println("Использование: call-tester sms <from_modem> <to_number> <message> [-o reports/]")
+			fmt.Println("Пример: call-tester sms ec25_1 +77009999999 \"Hello world\"")
+			os.Exit(1)
+		}
+
+		config := mustLoadConfig(configPath)
+		fromModem := smsFlags.Arg(0)
+		toNumber := smsFlags.Arg(1)
+		message := smsFlags.Arg(2)
+
+		// Создаём одношаговый сценарий
+		scenario := &models.Scenario{
+			Name: fmt.Sprintf("sms_%s_to_%s", fromModem, toNumber),
+			Steps: []models.ScenarioStep{
+				{
+					Action:    "sms",
+					FromModem: fromModem,
+					ToNumber:  toNumber,
+					Message:   message,
+				},
+			},
+		}
+		cmdRun(config, scenario, *output)
+
 	case "example-config":
 		cmdExampleConfig()
 
@@ -90,7 +120,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`call-tester — тестирование звонков модем-на-модем
+	fmt.Println(`call-tester — тестирование звонков, SMS и интернета
 
 Использование:
   call-tester [-c config.yaml] <command> [args]
@@ -99,6 +129,7 @@ func printUsage() {
   check                          Проверить подключение всех модемов
   run <scenario.yaml> [-o dir]   Запустить сценарий
   call <from> <to> [-d sec]      Одиночный тестовый звонок
+  sms <from> <number> <msg>      Отправить SMS на любой номер
   example-config                 Показать пример конфигурации
   example-scenario               Показать пример сценария`)
 }
@@ -197,12 +228,6 @@ modems:
     baud_rate: 115200
     model: Quectel EC25-EUX
     phone_number: "+77003333333"
-
-  - name: ep06
-    port: /dev/ttyUSB15
-    baud_rate: 115200
-    model: Quectel EP06-E
-    phone_number: "+77004444444"
 `)
 }
 
@@ -230,25 +255,10 @@ steps:
     duration_sec: 5
 
   - action: call
-    from_modem: sim7600
-    to_modem: ep06
-    hold_duration_sec: 60
-
-  - action: pause
-    duration_sec: 5
-
-  - action: call
     from_modem: ec25_2
     to_modem: ec25_1
     hold_duration_sec: 45
 
-  - action: pause
-    duration_sec: 5
-
-  - action: call
-    from_modem: ep06
-    to_modem: ec25_2
-    hold_duration_sec: 30
 `)
 }
 

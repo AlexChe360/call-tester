@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"go.bug.st/serial"
@@ -23,6 +24,7 @@ type Controller struct {
 	Name     string
 	Phone    string
 	Model    string
+	mu       sync.Mutex
 }
 
 // New открывает serial-порт и создаёт контроллер
@@ -324,6 +326,196 @@ func (c *Controller) WaitAndAnswer(timeout time.Duration) (callerNumber string, 
 			}
 		}
 	}
+}
+
+// SendSMS отправляет SMS сообщение на любой номер
+func (c *Controller) SendSMS(phoneNumber, message string) error {
+	log.Printf("[%s] Отправка SMS на %s: \"%s\"", c.Name, phoneNumber, message)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 1. Устанавливаем текстовый режим
+	if _, err := c.sendCommandOK("AT+CMGF=1", 2*time.Second); err != nil {
+		return fmt.Errorf("ошибка установки текстового режима: %w", err)
+	}
+
+	// 2. Указываем номер получателя
+	cmd := fmt.Sprintf("AT+CMGS=\"%s\"", phoneNumber)
+	if _, err := c.sendCommand(cmd, 5*time.Second); err != nil {
+		// Некоторые модемы не возвращают OK сразу, ждём приглашение ">"
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	// 3. Отправляем текст сообщения + Ctrl+Z (0x1A)
+	data := []byte(message + string(rune(26)))
+	n, err := c.port.Write(data)
+	if err != nil {
+		return fmt.Errorf("ошибка отправки текста SMS: %w", err)
+	}
+	log.Printf("[%s] Отправлено %d байт SMS", c.Name, n)
+
+	// 4. Ждём подтверждения
+	resp, err := c.readResponse(30 * time.Second)
+	if err != nil {
+		return fmt.Errorf("ошибка ожидания подтверждения SMS: %w", err)
+	}
+
+	if strings.Contains(resp, "+CMGS:") {
+		log.Printf("[%s] SMS успешно отправлена", c.Name)
+		return nil
+	}
+
+	if strings.Contains(resp, "ERROR") {
+		return fmt.Errorf("SMS не отправлено: %s", resp)
+	}
+
+	return nil
+}
+
+// SetupInternet настраивает интернет-соединение для Quectel EC25 и SIM7600
+func (c *Controller) SetupInternet(apn, user, password string) error {
+	log.Printf("[%s] Настройка интернета (APN: %s)", c.Name, apn)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Проверяем регистрацию в сети
+	resp, err := c.sendCommand("AT+CREG?", 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("ошибка проверки регистрации: %w", err)
+	}
+
+	if !strings.Contains(resp, ",1") && !strings.Contains(resp, ",5") {
+		return fmt.Errorf("модем не зарегистрирован в сети: %s", resp)
+	}
+
+	// Для Quectel EC25 используем команды QICSGP/QIACT
+	if strings.Contains(c.Model, "Quectel") {
+		// Настраиваем APN контекст 1
+		cmd := fmt.Sprintf("AT+QICSGP=1,1,\"%s\",\"%s\",\"%s\",1", apn, user, password)
+		if _, err := c.sendCommandOK(cmd, 5*time.Second); err != nil {
+			return fmt.Errorf("ошибка настройки APN: %w", err)
+		}
+
+		// Активируем PDP контекст
+		if _, err := c.sendCommandOK("AT+QIACT=1", 30*time.Second); err != nil {
+			return fmt.Errorf("ошибка активации PDP контекста: %w", err)
+		}
+
+		// Получаем IP адрес
+		ipResp, err := c.sendCommand("AT+QILOCIP", 5*time.Second)
+		if err != nil {
+			return fmt.Errorf("ошибка получения IP: %w", err)
+		}
+
+		// Парсим IP из ответа
+		lines := strings.Split(ipResp, "\r\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.Contains(line, ".") && !strings.Contains(line, "AT+QILOCIP") && !strings.Contains(line, "OK") {
+				log.Printf("[%s] Получен IP: %s", c.Name, line)
+				break
+			}
+		}
+	} else if strings.Contains(c.Model, "SIM7600") {
+		// Для SIM7600 используем команды CGDCONT/CGACT
+		cmd := fmt.Sprintf("AT+CGDCONT=1,\"IP\",\"%s\"", apn)
+		if _, err := c.sendCommandOK(cmd, 5*time.Second); err != nil {
+			return fmt.Errorf("ошибка настройки PDP контекста: %w", err)
+		}
+
+		// Активируем контекст
+		if _, err := c.sendCommandOK("AT+CGACT=1,1", 30*time.Second); err != nil {
+			return fmt.Errorf("ошибка активации контекста: %w", err)
+		}
+
+		// Получаем IP
+		ipResp, err := c.sendCommand("AT+CGPADDR=1", 5*time.Second)
+		if err != nil {
+			return fmt.Errorf("ошибка получения IP: %w", err)
+		}
+		log.Printf("[%s] Ответ CGPADDR: %s", c.Name, ipResp)
+	} else {
+		return fmt.Errorf("неподдерживаемая модель модема: %s", c.Model)
+	}
+
+	log.Printf("[%s] Интернет подключён успешно", c.Name)
+	return nil
+}
+
+// DisconnectInternet отключает интернет
+func (c *Controller) DisconnectInternet() error {
+	log.Printf("[%s] Отключение интернета", c.Name)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if strings.Contains(c.Model, "Quectel") {
+		if _, err := c.sendCommandOK("AT+QIDEACT=1", 10*time.Second); err != nil {
+			return fmt.Errorf("ошибка отключения интернета: %w", err)
+		}
+	} else if strings.Contains(c.Model, "SIM7600") {
+		if _, err := c.sendCommandOK("AT+CGACT=0,1", 10*time.Second); err != nil {
+			return fmt.Errorf("ошибка отключения интернета: %w", err)
+		}
+	} else {
+		return fmt.Errorf("неподдерживаемая модель модема: %s", c.Model)
+	}
+
+	log.Printf("[%s] Интернет отключён", c.Name)
+	return nil
+}
+
+// CheckInternetStatus проверяет статус интернет-соединения
+func (c *Controller) CheckInternetStatus() (connected bool, ipAddress string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if strings.Contains(c.Model, "Quectel") {
+		resp, err := c.sendCommand("AT+QIACT?", 5*time.Second)
+		if err != nil {
+			return false, "", err
+		}
+
+		// Парсим +QIACT: <contextID>,<status>,<IP>
+		if strings.Contains(resp, "+QIACT: 1,1") {
+			// Извлекаем IP
+			lines := strings.Split(resp, "\r\n")
+			for _, line := range lines {
+				if strings.Contains(line, "+QIACT: 1,1,") {
+					parts := strings.Split(line, ",")
+					if len(parts) >= 3 {
+						ipAddress = strings.Trim(parts[2], "\"")
+						return true, ipAddress, nil
+					}
+				}
+			}
+			return true, "", nil
+		}
+		return false, "", nil
+	} else if strings.Contains(c.Model, "SIM7600") {
+		resp, err := c.sendCommand("AT+CGACT?", 5*time.Second)
+		if err != nil {
+			return false, "", err
+		}
+
+		if strings.Contains(resp, "+CGACT: 1,1") {
+			// Получаем IP
+			ipResp, err := c.sendCommand("AT+CGPADDR=1", 5*time.Second)
+			if err == nil && strings.Contains(ipResp, "+CGPADDR: 1,") {
+				parts := strings.Split(ipResp, ",")
+				if len(parts) >= 2 {
+					ipAddress = strings.TrimSpace(parts[1])
+					return true, ipAddress, nil
+				}
+			}
+			return true, "", nil
+		}
+		return false, "", nil
+	}
+
+	return false, "", fmt.Errorf("неизвестная модель модема")
 }
 
 // Hangup завершает вызов
