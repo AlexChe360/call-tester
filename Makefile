@@ -1,7 +1,7 @@
 # Makefile для call-tester
 
 BINARY = call-tester
-RPI_HOST = pi@192.168.0.107
+RPI_HOST = pi@192.168.0.109
 RPI_DIR = /home/pi/call-tester
 
 # Сборка локально (на RPi)
@@ -15,28 +15,41 @@ build-rpi:
 
 # Деплой на RPi (с мака)
 deploy: build-rpi
+	@echo "📦 Деплой на RPi..."
 	ssh $(RPI_HOST) "mkdir -p $(RPI_DIR)/scenarios $(RPI_DIR)/reports"
-	scp $(BINARY)-linux-arm64 $(RPI_HOST):$(RPI_DIR)/$(BINARY)
-	scp config.yaml $(RPI_HOST):$(RPI_DIR)/
-	scp scenarios/*.yaml $(RPI_HOST):$(RPI_DIR)/scenarios/
-	scp setup_rpi.sh $(RPI_HOST):$(RPI_DIR)/
-	ssh $(RPI_HOST) "chmod +x $(RPI_DIR)/$(BINARY) $(RPI_DIR)/setup_rpi.sh"
+	scp -r $(BINARY)-linux-arm64 $(RPI_HOST):$(RPI_DIR)/$(BINARY)
+	scp -r config.yaml $(RPI_HOST):$(RPI_DIR)/
+	scp -r scenarios/*.yaml $(RPI_HOST):$(RPI_DIR)/scenarios/ 2>/dev/null || true
+	scp -r setup_rpi.sh $(RPI_HOST):$(RPI_DIR)/ 2>/dev/null || true
+	ssh $(RPI_HOST) "chmod +x $(RPI_DIR)/$(BINARY)"
 	@echo ""
-	@echo "Деплой завершён. На RPi:"
-	@echo "  cd $(RPI_DIR)"
-	@echo "  ./call-tester check"
+	@echo "✅ Деплой завершён. На RPi выполните:"
+	@echo "  cd $(RPI_DIR) && ./call-tester check"
 
-# Проверка модемов (на RPi)
+# Принудительная пересборка и деплой
+rebuild: clean build-rpi deploy
+
+# === Команды для выполнения на RPi через SSH ===
 check:
-	./$(BINARY) check
+	@echo "🔍 Проверка модемов на RPi..."
+	ssh $(RPI_HOST) "cd $(RPI_DIR) && ./$(BINARY) check"
 
-# Запуск сценария (на RPi)
-run:
-	./$(BINARY) run scenarios/full_matrix.yaml -o reports/
+run-scenario:
+	@echo "📞 Запуск теста на RPi..."
+	ssh $(RPI_HOST) "cd $(RPI_DIR) && ./$(BINARY) run scenarios/full_scenario.yaml -o reports/"
 
-# Тестовый звонок (на RPi)
-test-call:
-	./$(BINARY) call sim7600 ec25_1 -d 10
+# Получение отчётов с RPi
+fetch-reports:
+	@echo "📥 Скачивание отчётов с RPi..."
+	@mkdir -p reports
+	scp $(RPI_HOST):$(RPI_DIR)/reports/*.json reports/ 2>/dev/null || echo "Нет JSON отчётов"
+	scp $(RPI_HOST):$(RPI_DIR)/reports/*.csv reports/ 2>/dev/null || echo "Нет CSV отчётов"
+	@echo "✅ Отчёты скопированы в ./reports/"
+
+# Просмотр последних отчётов
+show-reports:
+	@echo "📊 Последние отчёты на RPi:"
+	ssh $(RPI_HOST) "cd $(RPI_DIR) && ls -la reports/ | tail -5"
 
 clean:
 	rm -f $(BINARY) $(BINARY)-linux-arm64

@@ -173,7 +173,10 @@ func (e *Engine) Execute(scenario *models.Scenario) (*models.ScenarioReport, err
 
 	successful := 0
 	for _, r := range records {
-		if r.Status == models.StatusAnswered {
+		// Учитываем все успешные статусы
+		if r.Status == models.StatusAnswered ||
+			r.Status == models.StatusSent ||
+			r.Status == models.StatusConnected {
 			successful++
 		}
 	}
@@ -193,7 +196,7 @@ func (e *Engine) Execute(scenario *models.Scenario) (*models.ScenarioReport, err
 	return report, nil
 }
 
-// executeCall — ключевая логика одного звонка
+// / executeCall — ключевая логика одного звонка
 func (e *Engine) executeCall(fromName, toName string, holdSec int, scenarioName string, stepIdx int) (models.CallRecord, error) {
 	fromCfg, err := e.manager.Config(fromName)
 	if err != nil {
@@ -279,12 +282,14 @@ func (e *Engine) executeCall(fromName, toName string, holdSec int, scenarioName 
 		return record, nil
 	}
 
-	// --- Вызов установлен ---
+	// --- ВЫЗОВ УСПЕШНО УСТАНОВЛЕН ---
 	now := time.Now()
 	record.AnswerTime = &now
-	record.Status = models.StatusAnswered
+	record.Status = models.StatusAnswered // <<<<< ЭТА СТРОКА КЛЮЧЕВАЯ!
+	record.TalkDurationSec = new(float64)
+	*record.TalkDurationSec = 0
 
-	log.Printf("  Вызов установлен, удерживаем %d сек...", holdSec)
+	log.Printf("  ✅ Вызов установлен, удерживаем %d сек...", holdSec)
 	time.Sleep(time.Duration(holdSec) * time.Second)
 
 	// --- Вешаем трубку ---
@@ -295,12 +300,17 @@ func (e *Engine) executeCall(fromName, toName string, holdSec int, scenarioName 
 	endTime := time.Now()
 	record.CallEnd = &endTime
 
-	talkDur := endTime.Sub(*record.AnswerTime).Seconds()
-	record.TalkDurationSec = &talkDur
+	// Вычисляем длительность разговора
+	if record.AnswerTime != nil {
+		talkDur := endTime.Sub(*record.AnswerTime).Seconds()
+		record.TalkDurationSec = &talkDur
+		log.Printf("  📊 Длительность разговора: %.1f секунд", talkDur)
+	}
 
 	totalDur := endTime.Sub(record.CallStart).Seconds()
 	record.TotalDurationSec = &totalDur
 
+	log.Printf("  ✅ Звонок успешно завершён, статус: %s", record.Status)
 	return record, nil
 }
 
@@ -323,10 +333,10 @@ func (e *Engine) executeSMS(fromName, toName, toNumber, message, scenarioName st
 	if toNumber != "" {
 		// Отправка на произвольный номер
 		targetNumber = toNumber
-		targetModem = "" // не связано с модемом из конфига
+		targetModem = ""
 		log.Printf("  SMS на произвольный номер: %s", targetNumber)
 	} else if toName != "" {
-		// Отправка на модем из конфига (для обратной совместимости)
+		// Отправка на модем из конфига
 		toCfg, err := e.manager.Config(toName)
 		if err != nil {
 			return models.CallRecord{}, err
@@ -336,6 +346,11 @@ func (e *Engine) executeSMS(fromName, toName, toNumber, message, scenarioName st
 		log.Printf("  SMS на модем: %s (%s)", toName, targetNumber)
 	} else {
 		return models.CallRecord{}, fmt.Errorf("не указан получатель: нужен to_number или to_modem")
+	}
+
+	// Проверяем готовность модема к отправке SMS
+	if err := sender.CheckSMSRegistration(); err != nil {
+		return models.CallRecord{}, fmt.Errorf("модем не готов к отправке SMS: %w", err)
 	}
 
 	smsRecord := &models.SMSRecord{
@@ -356,6 +371,7 @@ func (e *Engine) executeSMS(fromName, toName, toNumber, message, scenarioName st
 		smsRecord.Status = models.StatusFailed
 		smsRecord.Error = err.Error()
 
+		now := time.Now()
 		return models.CallRecord{
 			ID:           smsRecord.ID,
 			Direction:    "outgoing",
@@ -364,7 +380,7 @@ func (e *Engine) executeSMS(fromName, toName, toNumber, message, scenarioName st
 			ToModem:      targetModem,
 			NumberB:      targetNumber,
 			CallStart:    smsRecord.SentAt,
-			CallEnd:      &smsRecord.SentAt,
+			CallEnd:      &now,
 			Status:       models.StatusFailed,
 			ScenarioName: scenarioName,
 			StepIndex:    stepIdx,

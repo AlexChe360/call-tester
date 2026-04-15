@@ -335,19 +335,37 @@ func (c *Controller) SendSMS(phoneNumber, message string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 1. Устанавливаем текстовый режим
+	// 1. Устанавливаем текстовый режим и кодировку GSM
 	if _, err := c.sendCommandOK("AT+CMGF=1", 2*time.Second); err != nil {
 		return fmt.Errorf("ошибка установки текстового режима: %w", err)
 	}
 
-	// 2. Указываем номер получателя
+	// 2. Устанавливаем кодировку символов (GSM 7-bit)
+	if _, err := c.sendCommandOK("AT+CSCS=\"GSM\"", 2*time.Second); err != nil {
+		log.Printf("[%s] Предупреждение: не удалось установить кодировку GSM: %v", c.Name, err)
+	}
+
+	// 3. Указываем номер получателя (убедимся, что номер в правильном формате)
+	// Номер должен быть в международном формате с +
+	if !strings.HasPrefix(phoneNumber, "+") {
+		phoneNumber = "+" + phoneNumber
+	}
+
 	cmd := fmt.Sprintf("AT+CMGS=\"%s\"", phoneNumber)
+	log.Printf("[%s] Отправка команды: %s", c.Name, cmd)
+
 	if _, err := c.sendCommand(cmd, 5*time.Second); err != nil {
-		// Некоторые модемы не возвращают OK сразу, ждём приглашение ">"
+		// Ждём приглашение ">"
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	// 3. Отправляем текст сообщения + Ctrl+Z (0x1A)
+	// 4. Отправляем текст сообщения + Ctrl+Z (0x1A)
+	// Обрезаем сообщение если слишком длинное (160 символов для GSM 7-bit)
+	if len(message) > 160 {
+		message = message[:157] + "..."
+		log.Printf("[%s] Сообщение обрезано до 160 символов", c.Name)
+	}
+
 	data := []byte(message + string(rune(26)))
 	n, err := c.port.Write(data)
 	if err != nil {
@@ -355,19 +373,50 @@ func (c *Controller) SendSMS(phoneNumber, message string) error {
 	}
 	log.Printf("[%s] Отправлено %d байт SMS", c.Name, n)
 
-	// 4. Ждём подтверждения
-	resp, err := c.readResponse(30 * time.Second)
+	// 5. Ждём подтверждения с увеличенным таймаутом
+	resp, err := c.readResponse(45 * time.Second)
 	if err != nil {
 		return fmt.Errorf("ошибка ожидания подтверждения SMS: %w", err)
 	}
+
+	log.Printf("[%s] Ответ после отправки SMS: %s", c.Name, strings.TrimSpace(resp))
 
 	if strings.Contains(resp, "+CMGS:") {
 		log.Printf("[%s] SMS успешно отправлена", c.Name)
 		return nil
 	}
 
-	if strings.Contains(resp, "ERROR") {
-		return fmt.Errorf("SMS не отправлено: %s", resp)
+	if strings.Contains(resp, "ERROR") || strings.Contains(resp, "+CMS ERROR") {
+		// Извлекаем код ошибки
+		errorCode := "unknown"
+		if strings.Contains(resp, "+CMS ERROR:") {
+			parts := strings.Split(resp, ":")
+			if len(parts) > 1 {
+				errorCode = strings.TrimSpace(parts[1])
+			}
+		}
+		return fmt.Errorf("SMS не отправлено: ошибка %s", errorCode)
+	}
+
+	return nil
+}
+
+// CheckSMSRegistration проверяет готовность модема к отправке SMS
+func (c *Controller) CheckSMSRegistration() error {
+	// Проверяем регистрацию в сети для SMS
+	resp, err := c.sendCommand("AT+CREG?", 5*time.Second)
+	if err != nil {
+		return err
+	}
+
+	if !strings.Contains(resp, ",1") && !strings.Contains(resp, ",5") {
+		return fmt.Errorf("модем не зарегистрирован в сети")
+	}
+
+	// Проверяем доступность сервиса SMS
+	resp, err = c.sendCommand("AT+CSMS?", 5*time.Second)
+	if err == nil && strings.Contains(resp, "+CSMS:") {
+		log.Printf("[%s] SMS сервис доступен", c.Name)
 	}
 
 	return nil
@@ -468,6 +517,7 @@ func (c *Controller) DisconnectInternet() error {
 }
 
 // CheckInternetStatus проверяет статус интернет-соединения
+// CheckInternetStatus проверяет статус интернет-соединения
 func (c *Controller) CheckInternetStatus() (connected bool, ipAddress string, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -478,20 +528,27 @@ func (c *Controller) CheckInternetStatus() (connected bool, ipAddress string, er
 			return false, "", err
 		}
 
-		// Парсим +QIACT: <contextID>,<status>,<IP>
-		if strings.Contains(resp, "+QIACT: 1,1") {
-			// Извлекаем IP
+		// Парсим +QIACT: <contextID>,<context_status>,<IP_status>,<IP_address>
+		// Пример: +QIACT: 1,1,1,"10.69.109.169"
+		if strings.Contains(resp, "+QIACT:") {
 			lines := strings.Split(resp, "\r\n")
 			for _, line := range lines {
-				if strings.Contains(line, "+QIACT: 1,1,") {
-					parts := strings.Split(line, ",")
-					if len(parts) >= 3 {
-						ipAddress = strings.Trim(parts[2], "\"")
-						return true, ipAddress, nil
+				if strings.Contains(line, "+QIACT:") {
+					// Извлекаем часть после +QIACT:
+					parts := strings.Split(line, ":")
+					if len(parts) < 2 {
+						continue
+					}
+					values := strings.Split(strings.TrimSpace(parts[1]), ",")
+					if len(values) >= 4 {
+						// context_status = values[1] (1 = активен)
+						if values[1] == "1" {
+							ipAddress = strings.Trim(values[3], "\"")
+							return true, ipAddress, nil
+						}
 					}
 				}
 			}
-			return true, "", nil
 		}
 		return false, "", nil
 	} else if strings.Contains(c.Model, "SIM7600") {

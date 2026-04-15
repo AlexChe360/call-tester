@@ -105,27 +105,42 @@ func SaveCSV(report *models.ScenarioReport, outputDir string) (string, error) {
 }
 
 // PrintSummary выводит сводку в консоль
+// В report.go, в функции PrintSummary
 func PrintSummary(report *models.ScenarioReport) {
-	fmt.Println()
-	fmt.Println("╔══════════════════════════════════════════════════════════╗")
-	fmt.Printf("║  Отчёт: %-47s ║\n", report.ScenarioName)
-	fmt.Printf("║  Выполнен: %-44s ║\n", report.ExecutedAt.Format("2006-01-02 15:04:05"))
+	fmt.Println("\n╔══════════════════════════════════════════════════════════╗")
+	fmt.Printf("║  Отчёт: %-50s ║\n", report.ScenarioName)
+	fmt.Printf("║  Выполнен: %-50s ║\n", report.ExecutedAt.Format("2006-01-02 15:04:05"))
 	fmt.Println("╠══════════════════════════════════════════════════════════╣")
-	fmt.Printf("║  Всего звонков: %-39d ║\n", report.TotalCalls)
-	fmt.Printf("║  Успешных:      %-39d ║\n", report.SuccessfulCalls)
-	fmt.Printf("║  Неудачных:     %-39d ║\n", report.FailedCalls)
+	fmt.Printf("║  Всего операций: %-41d ║\n", report.TotalCalls)
+	fmt.Printf("║  Успешных:       %-41d ║\n", report.SuccessfulCalls)
+	fmt.Printf("║  Неудачных:      %-41d ║\n", report.FailedCalls)
 	fmt.Println("╠══════════════════════════════════════════════════════════╣")
 
+	// Показываем детали по каждой операции
 	for _, r := range report.Records {
-		dur := "-"
-		if r.TalkDurationSec != nil {
-			dur = fmt.Sprintf("%.1fс", *r.TalkDurationSec)
+		statusChar := "✓"
+		if r.Status != models.StatusAnswered &&
+			r.Status != models.StatusSent &&
+			r.Status != models.StatusConnected {
+			statusChar = "✗"
 		}
-		fmt.Printf("║  %s -> %s | %s | %s\n", r.NumberA, r.NumberB, r.Status, dur)
-	}
 
+		if r.SMSRecord != nil {
+			fmt.Printf("║  %s %s -> %s | %s | -%36s ║\n",
+				statusChar, r.NumberA, r.NumberB, r.Status, "")
+		} else if r.InternetRecord != nil {
+			fmt.Printf("║  %s %s -> интернет | %s | -%31s ║\n",
+				statusChar, r.NumberA, r.Status, "")
+		} else {
+			duration := ""
+			if r.TalkDurationSec != nil {
+				duration = fmt.Sprintf("%.1fс", *r.TalkDurationSec)
+			}
+			fmt.Printf("║  %s %s -> %s | %s | %-23s ║\n",
+				statusChar, r.NumberA, r.NumberB, r.Status, duration)
+		}
+	}
 	fmt.Println("╚══════════════════════════════════════════════════════════╝")
-	fmt.Println()
 }
 
 func sanitize(s string) string {

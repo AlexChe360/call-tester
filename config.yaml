@@ -8,29 +8,18 @@
 #   4. Проверка: echo -e "AT\r" > /dev/ttyUSBx && timeout 1 cat /dev/ttyUSBx
 
 modems:
-  - name: sim7600
-    port: /dev/ttyUSB2
-    baud_rate: 115200
-    model: SIM7600E-L1C
-    phone_number: "+77086420937"
-    apn: "internet"     
-    apn_user: ""
-    apn_password: ""
-
+  # EC25_1 
   - name: ec25_1
-    port: /dev/ttyUSB7
+    port: /dev/ttyUSB2  
     baud_rate: 115200
     model: Quectel EC25-EUX
-    phone_number: "+77076421165"
-    apn: "internet"                 
-    apn_user: ""
-    apn_password: ""
-
-  - name: ec25_2
-    port: /dev/ttyUSB11
-    baud_rate: 115200
-    model: Quectel EC25-EUX
-    phone_number: "+77076423712"
+    phone_number: "+77076421165"  
     apn: "internet"
-    apn_user: ""
-    apn_password: ""
+
+  # EC25_2 
+  - name: ec25_2
+    port: /dev/ttyUSB6  
+    baud_rate: 115200
+    model: Quectel EC25-EUX
+    phone_number: "+77076423712" 
+    apn: "internet"

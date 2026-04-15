@@ -211,12 +211,6 @@ func cmdExampleConfig() {
 # EC25/EP06: создаёт 4 порта, AT = ttyUSBx+2 или x+3
 
 modems:
-  - name: sim7600
-    port: /dev/ttyUSB2
-    baud_rate: 115200
-    model: SIM7600E-L1C
-    phone_number: "+77001111111"
-
   - name: ec25_1
     port: /dev/ttyUSB7
     baud_rate: 115200
@@ -238,13 +232,6 @@ name: billing_test
 description: Базовый тест для сверки с биллингом
 
 steps:
-  - action: call
-    from_modem: sim7600
-    to_modem: ec25_1
-    hold_duration_sec: 30
-
-  - action: pause
-    duration_sec: 5
 
   - action: call
     from_modem: ec25_1

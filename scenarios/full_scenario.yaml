@@ -1,0 +1,59 @@
+name: full_scenario
+description: >
+  Полный перебор всех направлений между модемами, подключения к интеренту и отправка смс.
+
+steps:
+  - action: internet_on
+    from_modem: ec25_1
+    apn: "internet"
+    
+  - action: pause
+    duration_sec: 5
+    
+  - action: internet_off
+    from_modem: ec25_1
+    
+  - action: pause
+    duration_sec: 5
+
+  - action: internet_on
+    from_modem: ec25_2
+    apn: "internet"
+    
+  - action: pause
+    duration_sec: 5
+    
+  - action: internet_off
+    from_modem: ec25_2
+    
+  - action: pause
+    duration_sec: 5
+
+  - action: sms
+    from_modem: ec25_1
+    to_number: "+77078185115"
+    message: "Test message from EC25-1"
+    
+  - action: pause
+    duration_sec: 5
+
+  - action: sms
+    from_modem: ec25_2
+    to_number: "+77072110963"
+    message: "Test message from EC25-2"
+    
+  - action: pause
+    duration_sec: 5
+
+  - action: call
+    from_modem: ec25_1
+    to_modem: ec25_2
+    hold_duration_sec: 30
+
+  - action: pause
+    duration_sec: 5
+
+  - action: call
+    from_modem: ec25_2
+    to_modem: ec25_1
+    hold_duration_sec: 30
