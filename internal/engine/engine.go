@@ -310,6 +310,13 @@ func (e *Engine) executeCall(fromName, toName string, holdSec int, scenarioName 
 	totalDur := endTime.Sub(record.CallStart).Seconds()
 	record.TotalDurationSec = &totalDur
 
+	if record.AnswerTime != nil {
+		record.Status = models.StatusAnswered
+		if record.TalkDurationSec != nil && *record.TalkDurationSec > 0 {
+			log.Printf("  📊 ИТОГО: статус=%s, длительность=%.1fс", record.Status, *record.TalkDurationSec)
+		}
+	}
+
 	log.Printf("  ✅ Звонок успешно завершён, статус: %s", record.Status)
 	return record, nil
 }
